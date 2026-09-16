@@ -1,0 +1,572 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HUMSONG - hum a melody, get a song</title>
+<style>
+:root{
+  --paper:#f4f1ea; --ink:#1d1a16; --soft:#8a8577; --hair:#d8d2c4;
+  --accent:#2536b8; --accent-ink:#1a2570;
+}
+*{box-sizing:border-box; margin:0; padding:0}
+html{-webkit-text-size-adjust:100%}
+body{background:var(--paper); color:var(--ink); font-family:ui-sans-serif,system-ui,"Helvetica Neue",Arial,sans-serif; line-height:1.5; padding:0 20px 80px}
+.wrap{max-width:760px; margin:0 auto}
+.eyebrow{font-size:11px; letter-spacing:.32em; text-transform:uppercase; color:var(--soft); padding:28px 0 10px; border-bottom:1px solid var(--hair)}
+h1{font-size:44px; font-weight:650; letter-spacing:-.01em; margin:26px 0 6px}
+.lede{font-size:16px; color:#3c382f; max-width:56ch}
+.lede em{font-family:Georgia,serif; font-style:italic}
+.rule{height:1px; background:var(--hair); margin:26px 0}
+.stage{border:1px solid var(--hair); border-radius:3px; padding:26px; background:#faf8f2}
+.controls{display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin-top:18px}
+button{font:inherit; cursor:pointer; border:1px solid var(--ink); background:transparent; color:var(--ink); padding:11px 22px; border-radius:3px; letter-spacing:.14em; text-transform:uppercase; font-size:12px; font-weight:600}
+button:hover{background:var(--ink); color:var(--paper)}
+button:disabled{opacity:.35; cursor:default}
+button.primary{background:var(--accent); border-color:var(--accent); color:#fff}
+button.primary:hover{background:var(--accent-ink)}
+button.ghost{border-color:var(--hair); color:var(--soft)}
+button.ghost:hover{border-color:var(--ink); color:var(--ink); background:transparent}
+.status{font-size:13px; color:var(--soft); margin-top:14px; min-height:1.4em}
+.status b{color:var(--ink); font-weight:600}
+canvas{display:block; width:100%; margin-top:18px}
+#live{border:1px solid var(--hair); border-radius:3px; background:var(--paper)}
+#score{border:1px solid var(--hair); border-radius:3px; background:var(--paper)}
+.modes{display:flex; gap:18px; flex-wrap:wrap; margin-top:16px; font-size:13px; color:#3c382f}
+.modes label{display:flex; gap:7px; align-items:center; cursor:pointer}
+.modes input{accent-color:var(--accent)}
+.progress{height:2px; background:var(--hair); margin-top:18px; position:relative}
+.progress i{position:absolute; left:0; top:0; bottom:0; background:var(--accent); width:0%}
+.secline{font-size:12px; letter-spacing:.2em; text-transform:uppercase; color:var(--soft); margin-top:8px; min-height:1.2em}
+.meta{display:flex; gap:26px; flex-wrap:wrap; margin-top:16px; font-size:12px; color:var(--soft); letter-spacing:.06em}
+.meta span b{color:var(--ink); font-weight:600; letter-spacing:.02em}
+.note{font-size:12px; color:var(--soft); margin-top:34px; border-top:1px solid var(--hair); padding-top:14px; max-width:60ch}
+.hidden{display:none}
+@media (max-width:520px){ h1{font-size:34px} .stage{padding:18px} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="eyebrow">Humsuite &middot; 01 &middot; Voice as seed</div>
+  <h1>HUMSONG</h1>
+  <p class="lede">Hum a melody for a few seconds. The machine transcribes it, then keeps writing &mdash; new sections, a hook made of your own phrase, an ending. <em>Your melody, continued long after you stop.</em></p>
+
+  <div class="rule"></div>
+
+  <div class="stage">
+    <div class="controls">
+      <button id="recBtn" class="primary">Start humming</button>
+      <button id="stopBtn" class="hidden">Done &mdash; transcribe</button>
+      <button id="demoBtn" class="ghost">No mic? Use an example hum</button>
+    </div>
+    <div class="status" id="status">Allow the microphone, then hum one clear melody line. 5&ndash;20 seconds is plenty.</div>
+    <canvas id="live" class="hidden"></canvas>
+  </div>
+
+  <div id="composePane" class="stage hidden" style="margin-top:18px">
+    <div class="secline" id="transcriptLine">Transcription</div>
+    <canvas id="score"></canvas>
+    <div class="meta" id="metaLine"></div>
+    <div class="modes">
+      <label><input type="radio" name="mode" value="continue" checked> Continue from hum <span style="color:var(--soft)">&mdash; the song grows past your phrase</span></label>
+      <label><input type="radio" name="mode" value="humonly"> Hum only <span style="color:var(--soft)">&mdash; the song is exactly your melody, arranged</span></label>
+    </div>
+    <div class="controls">
+      <button id="composeBtn" class="primary">Compose the song</button>
+    </div>
+  </div>
+
+  <div id="playPane" class="stage hidden" style="margin-top:18px">
+    <div class="secline" id="songLine">Song</div>
+    <canvas id="songScore"></canvas>
+    <div class="progress"><i id="prog"></i></div>
+    <div class="secline" id="nowPlaying"></div>
+    <div class="controls">
+      <button id="playBtn">Play</button>
+      <button id="dlBtn" class="ghost">Download .wav</button>
+      <button id="againBtn" class="ghost">Hum again</button>
+    </div>
+  </div>
+
+  <p class="note">Everything runs in this page. Your hum is pitch-tracked, quantised and continued by a small composition engine on your own device &mdash; nothing is uploaded. Inspired by the YuE2 hum-to-song adapter released by The Fixed Seed Company (hum in, song out). Non-commercial, just like their weights.</p>
+</div>
+
+<script>
+"use strict";
+/* ---------- utilities ---------- */
+const $=id=>document.getElementById(id);
+const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
+function mulberry32(seed){let a=seed>>>0;return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
+const NOTE_NAMES=["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+const midiName=m=>NOTE_NAMES[m%12]+(Math.floor(m/12)-1);
+
+/* ---------- pitch tracking (YIN-lite) ---------- */
+function yinPitch(buf,sr){
+  const half=buf.length>>1;
+  const diff=new Float32Array(half);
+  for(let tau=0;tau<half;tau++){let s=0;for(let i=0;i<half;i++){const d=buf[i]-buf[i+tau];s+=d*d;}diff[tau]=s;}
+  const cmnd=new Float32Array(half);cmnd[0]=1;let run=0;
+  for(let tau=1;tau<half;tau++){run+=diff[tau];cmnd[tau]=run?diff[tau]*tau/run:1;}
+  const th=0.15;let tau=2;
+  while(tau<half-1){if(cmnd[tau]<th){while(tau+1<half-1&&cmnd[tau+1]<cmnd[tau])tau++;break;}tau++;}
+  if(tau>=half-1)return-1;
+  const x0=tau>1?tau-1:tau,x2=tau+1;
+  const s0=cmnd[x0],s1=cmnd[tau],s2=cmnd[x2];
+  const a=(s0+s2-2*s1)/2,b=(s2-s0)/2;
+  const bt=a?tau-b/(2*a):tau;
+  const f=sr/bt;
+  if(f<60||f>1100)return-1;
+  return f;
+}
+function rms(buf){let s=0;for(let i=0;i<buf.length;i++)s+=buf[i]*buf[i];return Math.sqrt(s/buf.length);}
+
+/* ---------- recording state ---------- */
+let actx=null,analyser=null,stream=null,recording=false;
+let samples=[];           // {t, f} raw pitch track
+let t0=0,rafId=0;
+const liveCv=$("live"),liveCtx=liveCv.getContext("2d");
+
+async function startRec(){
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:false}});
+  }catch(e){
+    $("status").innerHTML="Microphone unavailable. Use the example hum instead, or allow mic access and retry.";
+    return;
+  }
+  actx=actx||new (window.AudioContext||window.webkitAudioContext)();
+  if(actx.state==="suspended")await actx.resume();
+  const src=actx.createMediaStreamSource(stream);
+  analyser=actx.createAnalyser();analyser.fftSize=4096;
+  src.connect(analyser);
+  samples=[];recording=true;t0=performance.now();
+  $("recBtn").classList.add("hidden");$("stopBtn").classList.remove("hidden");
+  $("demoBtn").disabled=true;
+  $("status").innerHTML="<b>Recording.</b> Hum one melody line. Press done when you finish.";
+  liveCv.classList.remove("hidden");
+  sizeCanvas(liveCv,80); 
+  rafId=requestAnimationFrame(tick);
+}
+function stopRec(){
+  recording=false;cancelAnimationFrame(rafId);
+  if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
+  $("recBtn").classList.remove("hidden");$("stopBtn").classList.add("hidden");
+  $("demoBtn").disabled=false;
+  if(samples.filter(s=>s.f>0).length<25){
+    $("status").innerHTML="Too little melody heard. Hum a bit longer and clearer, then press done.";
+    liveCv.classList.add("hidden");
+    return;
+  }
+  $("status").textContent="";
+  liveCv.classList.add("hidden");
+  finishHum(samples);
+}
+const buf=new Float32Array(4096);
+function tick(){
+  if(!recording)return;
+  analyser.getFloatTimeDomainData(buf);
+  const level=rms(buf);
+  const f=level>0.008?yinPitch(buf,actx.sampleRate):-1;
+  const t=(performance.now()-t0)/1000;
+  samples.push({t,f});
+  drawLive(t,f);
+  if(t>30){stopRec();return;}
+  rafId=requestAnimationFrame(tick);
+}
+function sizeCanvas(cv,hCss){
+  const dpr=window.devicePixelRatio||1;
+  const w=cv.clientWidth||cv.parentElement.clientWidth-52;
+  cv.width=Math.max(300,w)*dpr;cv.height=hCss*dpr;
+  cv.style.height=hCss+"px";
+  cv.getContext("2d").setTransform(dpr,0,0,dpr,0,0);
+  cv._w=cv.width/dpr;cv._h=hCss;
+}
+function drawLive(t,f){
+  const c=liveCtx,W=liveCv._w,H=liveCv._h;
+  c.clearRect(0,0,W,H);
+  c.strokeStyle="#d8d2c4";c.lineWidth=1;
+  for(let i=1;i<4;i++){c.beginPath();c.moveTo(0,H*i/4);c.lineTo(W,H*i/4);c.stroke();}
+  const win=8; // seconds visible
+  const voiced=samples.filter(s=>s.f>0);
+  if(!voiced.length)return;
+  const lo=Math.min(...voiced.map(s=>s.f))*0.9,hi=Math.max(...voiced.map(s=>s.f))*1.1;
+  c.strokeStyle="#1d1a16";c.lineWidth=2;c.beginPath();
+  let pen=false;
+  for(const s of samples){
+    const x=W-((t-s.t)/win)*W;
+    if(x<0)continue;
+    if(s.f<=0){pen=false;continue;}
+    const y=H-((s.f-lo)/(hi-lo))*H;
+    if(!pen){c.moveTo(x,y);pen=true;}else c.lineTo(x,y);
+  }
+  c.stroke();
+}
+
+/* ---------- transcription ---------- */
+function trackToNotes(samples){
+  // smooth + segment into notes
+  const pts=samples.map(s=>({t:s.t,m:s.f>0?69+12*Math.log2(s.f/440):null}));
+  const notes=[];let cur=null;
+  for(const p of pts){
+    if(p.m===null){
+      if(cur&&p.t-cur.end>0.09){if(cur.end-cur.start>0.07)notes.push(cur);cur=null;}
+      else if(cur)cur.end=p.t;
+      continue;
+    }
+    if(!cur){cur={start:p.t,end:p.t,vals:[p.m]};continue;}
+    const med=cur.vals[cur.vals.length-1];
+    if(Math.abs(p.m-med)>0.9&&p.t-cur.start>0.05){
+      if(cur.end-cur.start>0.07)notes.push(cur);
+      cur={start:p.t,end:p.t,vals:[p.m]};
+    }else{cur.end=p.t;cur.vals.push(p.m);}
+  }
+  if(cur&&cur.end-cur.start>0.07)notes.push(cur);
+  return notes.map(n=>{
+    n.vals.sort((a,b)=>a-b);
+    return {start:n.start,end:n.end,midi:Math.round(n.vals[Math.floor(n.vals.length/2)])};
+  }).filter(n=>n.midi>40&&n.midi<96);
+}
+function estimateKey(notes){
+  const hist=new Array(12).fill(0);
+  for(const n of notes)hist[n.midi%12]+=n.end-n.start;
+  const maj=[6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88];
+  const min=[6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17];
+  let best={score:-2,root:0,minor:false};
+  for(let r=0;r<12;r++){
+    for(const [prof,minor] of [[maj,false],[min,true]]){
+      let num=0,sa=0,sb=0;
+      for(let i=0;i<12;i++){const a=hist[(i+r)%12],b=prof[i];num+=a*b;sa+=a*a;sb+=b*b;}
+      const sc=num/(Math.sqrt(sa*sb)||1);
+      if(sc>best.score)best={score:sc,root:r,minor};
+    }
+  }
+  return best;
+}
+const MAJ=[0,2,4,5,7,9,11],MIN=[0,2,3,5,7,8,10];
+function scaleOf(key){return key.minor?MIN:MAJ;}
+function snapToScale(m,key){
+  const sc=scaleOf(key),rel=((m-key.root)%12+12)%12;
+  if(sc.includes(rel))return m;
+  for(const d of [1,-1,2,-2]){const r2=((m+d-key.root)%12+12)%12;if(sc.includes(r2))return m+d;}
+  return m;
+}
+
+/* ---------- composition ---------- */
+let COMP=null; // composed song
+function compose(hum,key,tempo,mode,rng){
+  // quantize hum onto 16th grid
+  const grid=60/tempo/4;
+  const hNotes=hum.map(n=>({
+    beat:Math.round(n.start/grid)/4,
+    dur:Math.max(1,Math.round((n.end-n.start)/grid))/4,
+    midi:snapToScale(n.midi,key)
+  }));
+  const humLen=Math.ceil((hNotes[hNotes.length-1].beat+hNotes[hNotes.length-1].dur)/4)*4; // bars*4 beats
+  const padLen=humLen+ (4-(humLen%4))%4;
+  const sc=scaleOf(key);
+  const deg=d=>key.root+ 12*Math.floor(d/7)+sc[((d%7)+7)%7];
+  // chord plan per bar (scale degrees, 0-based)
+  const progA=[0,5,3,4], progB=[1,4,2,5];
+  const song=[]; // sections: {label, bars:[{chordDeg, melody:[{beat,dur,midi}]}]}
+  const shift=(notes,db,op)=>{
+    let out=notes.map(n=>({beat:n.beat+db,dur:n.dur,midi:n.midi}));
+    if(op==="seq2")out=out.map(n=>({...n,midi:snapToScale(n.midi+2,key)}));
+    if(op==="seq-2")out=out.map(n=>({...n,midi:snapToScale(n.midi-2,key)}));
+    if(op==="inv"){const p=out[0].midi;out=out.map((n,i)=>i===0?n:{...n,midi:snapToScale(p-(n.midi-p),key)});}
+    if(op==="retro"){const end=humLen;out=out.map(n=>({...n,beat:end-n.beat-n.dur})).sort((a,b)=>a.beat-b.beat);}
+    if(op==="aug")out=out.map(n=>({...n,beat:n.beat*2,dur:n.dur*2}));
+    return out;
+  };
+  const barsOf=(len,chords,melody)=>({len,chords,melody});
+  const H=barsOf(padLen,Array.from({length:padLen/4},(_,i)=>progA[i%4]),hNotes);
+  const sections=[];
+  const put=(label,b)=>sections.push({label,...b});
+  if(mode==="continue"){
+    const ops=["seq2","seq-2","inv","retro","aug"];
+    const op1=ops[Math.floor(rng()*3)],op2=ops[2+Math.floor(rng()*3)];
+    const intro={len:4,chords:[0],melody:[]};
+    const dev1=barsOf(padLen,Array.from({length:padLen/4},(_,i)=>progB[i%4]),shift(hNotes,0,op1));
+    const dev2=barsOf(padLen,Array.from({length:padLen/4},(_,i)=>progB[(i+1)%4]),shift(hNotes,0,op2));
+    const codaMel=shift(hNotes.slice(0,Math.max(2,Math.ceil(hNotes.length/3))),0,"aug");
+    const coda=barsOf(4,[0,3,4,0],codaMel);
+    put("intro",intro);
+    put("your hum",H);
+    put("reprise",H); // hook recurrence, verbatim
+    put("development",dev1);
+    put("development ii",dev2);
+    put("hook",H);   // hook returns verbatim, like the reference behavior
+    put("hook",H);
+    put("coda",coda);
+  }else{
+    put("your hum",H);
+    put("your hum, again",H);
+    put("coda",barsOf(4,[0,3,4,0],[]));
+  }
+  // flatten to events
+  const evMel=[],evCh=[];
+  let off=0;
+  const secMarks=[];
+  for(const s of sections){
+    secMarks.push({beat:off,label:s.label});
+    for(const n of s.melody)evMel.push({beat:off+n.beat,dur:n.dur,midi:n.midi});
+    for(let b=0;b<s.len/4;b++){
+      const cd=s.chords[b%s.chords.length];
+      evCh.push({beat:off+b*4,deg:cd});
+    }
+    off+=s.len;
+  }
+  return {sections:secMarks,melody:evMel,chords:evCh,totalBeats:off,humEndBeat:mode==="continue"?4+padLen:padLen,humBars:padLen,key,tempo,humNotes:hNotes};
+}
+const beat2s=b=>b*60/COMP.tempo;
+const degFreq=(key,d,oct)=>{const sc=scaleOf(key);const midi=12*(oct+1)+key.root+12*Math.floor(d/7)+sc[((d%7)+7)%7];return 440*Math.pow(2,(midi-69)/12);};
+
+/* ---------- render audio ---------- */
+let wavBlob=null;
+async function renderSong(){
+  const sr=44100,dur=beat2s(COMP.totalBeats)+2.5;
+  const ctx=new OfflineAudioContext(2,Math.ceil(sr*dur),sr);
+  const master=ctx.createGain();master.gain.value=0.8;master.connect(ctx.destination);
+  const m2f=m=>440*Math.pow(2,(m-69)/12);
+  // melody: sine with gentle vibrato (the hum voice)
+  for(const n of COMP.melody){
+    const t=beat2s(n.beat),d=beat2s(n.dur)*0.92;
+    const o=ctx.createOscillator();o.type="sine";o.frequency.value=m2f(n.midi);
+    const lfo=ctx.createOscillator();lfo.frequency.value=5.2;
+    const lg=ctx.createGain();lg.gain.value=0;lfo.connect(lg);lg.connect(o.frequency);
+    lg.gain.setValueAtTime(0,t);lg.gain.linearRampToValueAtTime(m2f(n.midi)*0.006,t+Math.min(0.35,d*0.5));
+    const g=ctx.createGain();
+    g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(0.34,t+0.03);
+    g.gain.setValueAtTime(0.34,t+d-0.06);g.gain.linearRampToValueAtTime(0,t+d);
+    o.connect(g);g.connect(master);o.start(t);o.stop(t+d+0.05);lfo.start(t);lfo.stop(t+d+0.05);
+    // soft octave shimmer
+    const o2=ctx.createOscillator();o2.type="sine";o2.frequency.value=m2f(n.midi)*2;
+    const g2=ctx.createGain();g2.gain.setValueAtTime(0,t);g2.gain.linearRampToValueAtTime(0.05,t+0.04);g2.gain.linearRampToValueAtTime(0,t+d);
+    o2.connect(g2);g2.connect(master);o2.start(t);o2.stop(t+d+0.05);
+  }
+  // chords: bass + pad + pulse
+  for(const ch of COMP.chords){
+    const t=beat2s(ch.beat);
+    const root=degFreq(COMP.key,ch.deg,2);
+    const third=degFreq(COMP.key,ch.deg+2,3),fifth=degFreq(COMP.key,ch.deg+4,3);
+    // bass
+    const b=ctx.createOscillator();b.type="triangle";b.frequency.value=root;
+    const bg=ctx.createGain();bg.gain.setValueAtTime(0,t);bg.gain.linearRampToValueAtTime(0.22,t+0.05);bg.gain.setTargetAtTime(0.12,t+0.4,0.6);bg.gain.setTargetAtTime(0,t+beat2s(4)-0.3,0.2);
+    b.connect(bg);bg.connect(master);b.start(t);b.stop(t+beat2s(4)+0.3);
+    // pad (third + fifth, detuned pair, lowpassed)
+    const lp=ctx.createBiquadFilter();lp.type="lowpass";lp.frequency.value=900;
+    const pg=ctx.createGain();pg.gain.setValueAtTime(0,t);pg.gain.linearRampToValueAtTime(0.06,t+0.6);pg.gain.setTargetAtTime(0,t+beat2s(4)-0.5,0.3);
+    lp.connect(pg);pg.connect(master);
+    for(const f of [third,fifth])for(const det of [-3,3]){
+      const o=ctx.createOscillator();o.type="sawtooth";o.frequency.value=f;o.detune.value=det;
+      o.connect(lp);o.start(t);o.stop(t+beat2s(4)+0.4);
+    }
+    // pulse: kick 1&3, hat 8ths, tick 2&4
+    for(let beat=0;beat<4;beat++){
+      const bt=t+beat2s(beat);
+      if(beat%2===0){
+        const k=ctx.createOscillator();k.type="sine";
+        k.frequency.setValueAtTime(120,bt);k.frequency.exponentialRampToValueAtTime(48,bt+0.09);
+        const kg=ctx.createGain();kg.gain.setValueAtTime(0.20,bt);kg.gain.exponentialRampToValueAtTime(0.001,bt+0.16);
+        k.connect(kg);kg.connect(master);k.start(bt);k.stop(bt+0.2);
+      }else{
+        const nb=noiseBurst(ctx,bt,0.05,1600,0.05);nb.connect(master);
+      }
+      for(const sub of [0,0.5]){
+        const ht=bt+beat2s(sub);
+        const nb=noiseBurst(ctx,ht,0.03,7000,0.035);nb.connect(master);
+      }
+    }
+  }
+  const rendered=await ctx.startRendering();
+  wavBlob=bufferToWav(rendered);
+  return rendered;
+}
+function noiseBurst(ctx,t,dur,hp,vol){
+  const len=Math.ceil(ctx.sampleRate*dur);
+  const b=ctx.createBuffer(1,len,ctx.sampleRate);
+  const d=b.getChannelData(0);
+  for(let i=0;i<len;i++)d[i]=(Math.random()*2-1)*(1-i/len);
+  const s=ctx.createBufferSource();s.buffer=b;
+  const f=ctx.createBiquadFilter();f.type="highpass";f.frequency.value=hp;
+  const g=ctx.createGain();g.gain.value=vol;
+  s.connect(f);f.connect(g);s.start(t);
+  return g;
+}
+function bufferToWav(buf){
+  const ch=2,sr=buf.sampleRate,len=buf.length*ch*2+44;
+  const out=new DataView(new ArrayBuffer(len));
+  const wstr=(o,s)=>{for(let i=0;i<s.length;i++)out.setUint8(o+i,s.charCodeAt(i));};
+  wstr(0,"RIFF");out.setUint32(4,len-8,true);wstr(8,"WAVE");wstr(12,"fmt ");
+  out.setUint32(16,16,true);out.setUint16(20,1,true);out.setUint16(22,2,true);
+  out.setUint32(24,sr,true);out.setUint32(28,sr*4,true);out.setUint16(32,4,true);out.setUint16(34,16,true);
+  wstr(36,"data");out.setUint32(40,len-44,true);
+  const L=buf.getChannelData(0),R=buf.getChannelData(1);
+  let o=44;
+  for(let i=0;i<buf.length;i++){
+    out.setInt16(o,clamp(L[i],-1,1)*32767,true);o+=2;
+    out.setInt16(o,clamp(R[i],-1,1)*32767,true);o+=2;
+  }
+  return new Blob([out],{type:"audio/wav"});
+}
+
+/* ---------- score drawing ---------- */
+function drawScore(cv,notes,totalBeats,humEndBeat,sections,playBeat){
+  sizeCanvas(cv,170);
+  const c=cv.getContext("2d"),W=cv._w,H=cv._h;
+  c.clearRect(0,0,W,H);
+  const midis=notes.map(n=>n.midi);
+  const lo=Math.min(...midis)-2,hi=Math.max(...midis)+2;
+  const padL=8,padR=8,padT=24,padB=14;
+  const iw=W-padL-padR,ih=H-padT-padB;
+  const x=b=>padL+(b/totalBeats)*iw;
+  const y=m=>padT+ih-((m-lo)/(hi-lo))*ih;
+  // hum region highlight
+  if(humEndBeat>0){
+    c.fillStyle="rgba(37,54,184,.08)";
+    c.fillRect(x(0),padT-6,x(humEndBeat)-x(0),ih+12);
+  }
+  // grid
+  c.strokeStyle="#e2dccf";c.lineWidth=1;
+  for(let i=0;i<=4;i++){const gy=padT+ih*i/4;c.beginPath();c.moveTo(padL,gy);c.lineTo(W-padR,gy);c.stroke();}
+  // barlines
+  c.strokeStyle="#cfc8b8";
+  for(let b=0;b<=totalBeats;b+=4){c.beginPath();c.moveTo(x(b),padT-6);c.lineTo(x(b),padT+ih+6);c.stroke();}
+  // section labels
+  c.fillStyle="#8a8577";c.font="9px ui-sans-serif,system-ui";c.textAlign="left";
+  for(const s of sections){
+    c.save();
+    c.fillText(s.label.toUpperCase(),x(s.beat)+3,12);
+    c.restore();
+  }
+  // notes
+  for(const n of notes){
+    const inHum=n.beat<humEndBeat-0.001;
+    c.fillStyle=inHum?"#2536b8":"#1d1a16";
+    const nx=x(n.beat),nw=Math.max(3,(n.dur/totalBeats)*iw-1.5);
+    c.beginPath();
+    const ny=y(n.midi),r=2.4;
+    c.roundRect(nx,ny-r,nw,r*2,r);
+    c.fill();
+  }
+  // playhead
+  if(playBeat!=null){
+    c.strokeStyle="#2536b8";c.lineWidth=1.5;
+    c.beginPath();c.moveTo(x(playBeat),padT-6);c.lineTo(x(playBeat),padT+ih+6);c.stroke();
+  }
+  c.fillStyle="#8a8577";c.font="9px ui-sans-serif,system-ui";
+  c.textAlign="left";c.fillText(midiName(hi),2,padT+3);
+  c.fillText(midiName(lo),2,padT+ih);
+}
+
+/* ---------- flow ---------- */
+let HUM=null,KEY=null,TEMPO=null;
+function finishHum(samples){
+  const notes=trackToNotes(samples);
+  if(notes.length<4){
+    $("status").innerHTML="Heard only "+notes.length+" notes. Hum a clearer melody (at least 4 notes).";
+    return;
+  }
+  // tempo from IOIs
+  const iois=[];
+  for(let i=1;i<notes.length;i++)iois.push(notes[i].start-notes[i-1].start);
+  iois.sort((a,b)=>a-b);
+  const med=iois[Math.floor(iois.length/2)]||0.5;
+  let tempo=clamp(Math.round(60/med),72,132);
+  KEY=estimateKey(notes);
+  TEMPO=tempo;
+  HUM={notes,tempo};
+  $("composePane").classList.remove("hidden");
+  const keyName=midiName(KEY.root+60).replace(/[0-9]/g,"")+(KEY.minor?" minor":" major");
+  $("transcriptLine").textContent="Transcription - "+notes.length+" notes";
+  $("metaLine").innerHTML="<span>KEY <b>"+keyName+"</b></span><span>TEMPO <b>"+tempo+" bpm</b></span><span>NOTES <b>"+notes.length+"</b></span>";
+  const totalBeats=Math.ceil((notes[notes.length-1].end)/ (60/tempo) /4)*4+4;
+  drawScore($("score"),humToBeats(notes,tempo),totalBeats,totalBeats-4,[{beat:0,label:"your hum"}],null);
+  $("composePane").scrollIntoView({behavior:"smooth",block:"center"});
+}
+function humToBeats(notes,tempo){
+  const grid=60/tempo/4;
+  return notes.map(n=>({beat:Math.round(n.start/grid)/4,dur:Math.max(1,Math.round((n.end-n.start)/grid))/4,midi:snapToScale(n.midi,KEY)}));
+}
+function hashHum(notes){
+  let h=2166136261;
+  for(const n of notes){h^=n.midi*97+Math.round(n.start*13);h=Math.imul(h,16777619);}
+  return h>>>0;
+}
+
+let playTimer=null,playStart=0,playSrc=null;
+$("recBtn").onclick=startRec;
+$("stopBtn").onclick=stopRec;
+$("demoBtn").onclick=()=>{
+  // built-in example hum: an original 9-note phrase (not from any song)
+  const seq=[[0,.5,67],[0.5,.5,69],[1,.5,72],[1.5,.25,71],[1.75,.25,72],[2,.75,74],[2.75,.25,72],[3,.5,69],[3.5,1,67]];
+  const notes=seq.map(([s,d,m])=>({start:s,end:s+d,midi:m}));
+  samples=[];
+  for(const n of notes){
+    for(let t=n.start;t<n.end;t+=1/60)samples.push({t,f:440*Math.pow(2,(n.midi-69)/12)});
+    samples.push({t:n.end+0.02,f:-1});
+  }
+  $("status").textContent="";
+  finishHum(samples);
+};
+$("composeBtn").onclick=async()=>{
+  const mode=document.querySelector('input[name=mode]:checked').value;
+  const rng=mulberry32(hashHum(HUM.notes));
+  COMP=compose(HUM.notes,KEY,TEMPO,mode,rng);
+  $("composeBtn").disabled=true;$("composeBtn").textContent="Composing...";
+  $("playPane").classList.remove("hidden");
+  $("songLine").textContent="Song - "+Math.round(COMP.totalBeats*60/COMP.tempo)+"s";
+  drawScore($("songScore"),COMP.melody,COMP.totalBeats,COMP.humEndBeat,COMP.sections,null);
+  $("playBtn").disabled=true;$("playBtn").textContent="Rendering...";
+  $("playPane").scrollIntoView({behavior:"smooth",block:"center"});
+  await renderSong();
+  $("composeBtn").disabled=false;$("composeBtn").textContent="Compose the song";
+  $("playBtn").disabled=false;$("playBtn").textContent="Play";
+};
+$("playBtn").onclick=()=>{
+  if(playSrc){stopPlay();return;}
+  actx=actx||new (window.AudioContext||window.webkitAudioContext)();
+  const url=URL.createObjectURL(wavBlob);
+  playSrc=new Audio(url);
+  playSrc.play();
+  $("playBtn").textContent="Stop";
+  playStart=performance.now();
+  const step=()=>{
+    const el=(performance.now()-playStart)/1000;
+    const beat=el/(60/COMP.tempo);
+    if(el>=COMP.totalBeats*60/COMP.tempo+0.5){stopPlay();return;}
+    $("prog").style.width=(el/(COMP.totalBeats*60/COMP.tempo)*100)+"%";
+    let sec="";
+    for(const s of COMP.sections)if(s.beat<=beat)sec=s.label;
+    $("nowPlaying").textContent=sec;
+    drawScore($("songScore"),COMP.melody,COMP.totalBeats,COMP.humEndBeat,COMP.sections,beat);
+    playTimer=requestAnimationFrame(step);
+  };
+  step();
+};
+function stopPlay(){
+  if(playSrc){playSrc.pause();playSrc=null;}
+  cancelAnimationFrame(playTimer);
+  $("playBtn").textContent="Play";
+  $("prog").style.width="0%";$("nowPlaying").textContent="";
+  drawScore($("songScore"),COMP.melody,COMP.totalBeats,COMP.humEndBeat,COMP.sections,null);
+}
+$("dlBtn").onclick=()=>{
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(wavBlob);
+  a.download="humsong.wav";a.click();
+};
+$("againBtn").onclick=()=>{
+  stopPlay();
+  $("playPane").classList.add("hidden");
+  $("composePane").classList.add("hidden");
+  $("status").innerHTML="Hum one clear melody line. 5&ndash;20 seconds is plenty.";
+  window.scrollTo({top:0,behavior:"smooth"});
+};
+
+/* demo deep-link for QA: ?demo=1 renders the composed example immediately */
+if(new URLSearchParams(location.search).get("demo")){
+  $("demoBtn").click();
+  setTimeout(()=>{$("composeBtn").click();},300);
+}
+</script>
+</body>
+</html>

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>HUMSONG - hum a melody, get a song</title>
+<title>HUMSONG - hum a melody, get a song</title><meta name="description" content="Hum a melody for a few seconds. The machine transcribes it, then keeps writing - new sections, a hook made of your own phrase, an ending."><meta property="og:title" content="HUMSONG - hum a melody, get a song"><meta property="og:description" content="Hum a melody for a few seconds. The machine transcribes it, then keeps writing - new sections, a hook made of your own phrase, an ending."><meta property="og:type" content="website"><meta property="og:url" content="https://jacobegarcia.github.io/humsong/">
 <style>
 :root{
   --paper:#f4f1ea; --ink:#1d1a16; --soft:#8a8577; --hair:#d8d2c4;
@@ -432,10 +432,13 @@ function drawScore(cv,notes,totalBeats,humEndBeat,sections,playBeat){
   for(let b=0;b<=totalBeats;b+=4){c.beginPath();c.moveTo(x(b),padT-6);c.lineTo(x(b),padT+ih+6);c.stroke();}
   // section labels
   c.fillStyle="#8a8577";c.font="9px ui-sans-serif,system-ui";c.textAlign="left";
+  let rowEnd=[-1e9,-1e9];
   for(const s of sections){
-    c.save();
-    c.fillText(s.label.toUpperCase(),x(s.beat)+3,12);
-    c.restore();
+    const t=s.label.toUpperCase(),lx=x(s.beat)+3,w=c.measureText(t).width;
+    const row=lx<rowEnd[0]+5?1:0;
+    if(row===1&&lx<rowEnd[1]+5)continue;
+    c.fillText(t,lx,row?21:12);
+    rowEnd[row]=lx+w;
   }
   // notes
   for(const n of notes){
@@ -570,3 +573,4 @@ if(new URLSearchParams(location.search).get("demo")){
 </script>
 </body>
 </html>
+
